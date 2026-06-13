@@ -1,0 +1,17 @@
+[Encoding]
+InputEncoding=UTF-8
+
+[WFClient]
+Version=2
+ClientName=Smoke Test (PNAgent)
+
+[ApplicationServers]
+Smoke Test=
+
+[Smoke Test]
+Address=Smoke Test
+InitialProgram=
+TransportDriver=TCP
+TcpBrowserAddress=192.0.2.1
+SSLEnable=Off
+EncryptionLevel=Basic

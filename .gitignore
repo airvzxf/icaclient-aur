@@ -1,0 +1,39 @@
+# AUR / makepkg artifacts
+*.pkg.tar
+*.pkg.tar.*
+*.pkg.zst
+*.sig
+*.sig.zst
+src/
+pkg/
+*.log
+!*.err.log
+
+# Editor / OS junk
+*~
+.DS_Store
+*.swp
+*.bak
+*.orig
+*.rej
+
+# Local scratch spaces
+/tmp-test/
+/scratch/
+/build-*/
+
+# Anything downloaded from Citrix (the upstream tarball, ~560 MB, plus any
+# extracted Debian webkit bundle). The PKGBUILD's `source_x86_64=` renames
+# the URL form `linuxx64-*.tar.gz` to the local form `icaclient-x64-*.tar.gz`
+# (and similarly for arm64); both forms must be ignored or `makepkg` will
+# leave a 500+ MB untracked file in the variant directory.
+linuxx64-*.tar.gz
+linuxarm64-*.tar.gz
+icaclient-x64-*.tar.gz
+icaclient-arm64-*.tar.gz
+Webkit2gtk4.0/
+webkit2gtk-4.0-package/
+
+# Private (test-only) variants in pkgbuilds/ - prefixed with underscore
+# (see scripts/test-variant.bash for the convention)
+/pkgbuilds/_*/

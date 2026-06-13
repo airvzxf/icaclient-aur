@@ -1,0 +1,16 @@
+[Encoding]
+InputEncoding=UTF-8
+
+[WFClient]
+Version=2
+ClientName=Smoke Test (StoreFront)
+HttpBrowserAddress=https://192.0.2.1/Citrix/Store/discovery
+SSLEnable=On
+
+[ApplicationServers]
+Smoke Test StoreFront=
+
+[Smoke Test StoreFront]
+Address=Smoke Test StoreFront
+LaunchReference=https://192.0.2.1/Citrix/Store/discovery
+TransportDriver=HTTPS
