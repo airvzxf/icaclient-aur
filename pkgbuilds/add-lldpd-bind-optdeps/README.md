@@ -1,6 +1,6 @@
 # add-lldpd-bind-optdeps
 
-**Status:** proposed
+**Status:** candidate
 **Based on:** upstream AUR PKGBUILD @ pkgrel=3 (icaclient 26.01.0.150-3)
 **CHANGELOG entry:** [../../CHANGELOG.md](../../CHANGELOG.md) — "2026-06-12 — Variant `add-lldpd-bind-optdeps`: add `lldpd` and `bind` to optdepends"
 
