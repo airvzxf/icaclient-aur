@@ -1,0 +1,306 @@
+# Maintainer: Stephan Springer <buzo+arch@Lini.de>
+# Contributor: Moabeat <moabeat@berlin.de>
+# Contributor: Eric Liu <eric@hnws.me>
+# Contributor: Daniele Vazzola <daniele.vazzola@gmail.com>
+# Contributor: Ciarán Coffey <ciaran@ccoffey.ie>
+# Contributor: Matthew Gyurgyik <matthew@pyther.net>
+# Contributor: Giorgio Azzinnaro <giorgio@azzinna.ro>
+# Variant: airv_zxf (bundle-4.0-icu70)
+#
+# D.3 variant (see docs/alternatives.md and docs/d3-bundle-implementation-plan.md).
+# Extracts the prebuilt webkit2gtk-4.0 Debian bundle (shipped inside the Citrix
+# tarball) and bundles libsoup-2.4 (extracted from a libsoup2.4-1 Debian .deb
+# since Citrix does not ship it). selfservice launches without needing the
+# AUR webkit2gtk package.
+#
+# Implementation choices (per the implementation plan, 2026-06-12):
+#   - Path-patching strategy: (a) NUL-pad string replacement (Strategy (a)
+#     in the plan), with the per-match padding count computed dynamically
+#     by perl (s{}{}ge). The hardcoded \x00*N approach in the plan is
+#     off-by-N for some matches; the dynamic version is correct.
+#   - libsoup-2.4 sourcing: option (1) from the plan, download a
+#     libsoup2.4-1_*.deb from Debian's pool and unpack it.
+#   - aarch64 supported (not yet tested end-to-end on this dev host;
+#     structure verified for x86_64 only).
+
+pkgname=icaclient
+pkgver=26.01.0.150
+pkgrel=3
+pkgdesc="Citrix Workspace App (a.k.a. ICAClient, Citrix Receiver)"
+arch=(x86_64 aarch64)
+url='https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html'
+license=(LicenseRef-Citrix)
+depends=(alsa-lib curl gst-plugins-base-libs libc++ libc++abi
+         libsecret libvorbis libxaw libxml2-legacy libxp
+         openssl speex)
+makedepends+=('patchelf')
+# bsdtar is in libarchive, which is a base-devel dep on Arch; no need to add.
+# webkit2gtk and libsoup optdepends from upstream are removed: the bundle
+# provides both (libwebkit2gtk-4.0.so.37 from the Citrix tarball, libsoup-2.4
+# from the libsoup2.4-1 .deb). See Phases 1-7 of package() for the layout.
+conflicts=('bin32-citrix-client' 'citrix-client')
+options=(!strip)
+backup=("opt/Citrix/ICAClient/config/appsrv.ini" "opt/Citrix/ICAClient/config/wfclient.ini" "opt/Citrix/ICAClient/config/module.ini")
+_dl_urls_="$(curl -sL "$url" | grep -F ".tar.gz?__gda__")"
+_dl_urls="$(echo "$_dl_urls_" | grep -F "$pkgver.tar.gz?__gda__")"
+_source64=https:"$(echo "$_dl_urls" | sed -En 's|^.*rel="(//.*/linuxx64-[^"]*)".*$|\1|p')"
+_sourceaarch64=https:"$(echo "$_dl_urls" | sed -En 's|^.*rel="(//.*/linuxarm64-[^"]*)".*$|\1|p')"
+source=('citrix-configmgr.desktop'
+        'citrix-conncenter.desktop'
+        'citrix-wfica.desktop'
+        'citrix-workspace.desktop'
+        'wfica.sh'
+        'wfica_assoc.sh'
+        'ctxcwalogd.service'
+        'ctxusbd.service')
+source_x86_64=("$pkgname-x64-$pkgver.tar.gz::$_source64")
+source_aarch64=("$pkgname-arm64-$pkgver.tar.gz::$_sourceaarch64")
+# libsoup-2.4 for the bundled webkit2gtk-4.0 (Citrix does not ship it; we
+# fetch a libsoup2.4-1 Debian package and unpack it into $ICAROOT/lib/).
+# Pin to Debian bookworm: webkit2gtk-4.0 2.36.0 was packaged for Debian 12
+# and is ABI-compatible with libsoup 2.74.x from bookworm.
+#
+# The sha256sums below are the real ones (verified 2026-06-15 by
+# `curl -sL <url> | sha256sum -`). If Debian pushes a security update
+# to libsoup2.4-1 (e.g. 2.74.3-1+deb12u2), bump LIBSOUP_DEB_VERSION
+# and re-compute the sha256.
+: "${LIBSOUP_DEB_VERSION:=2.74.3-1+deb12u1}"
+_LIBSOUP_DEB_BASE="http://deb.debian.org/debian/pool/main/libs/libsoup2.4"
+source_x86_64+=("libsoup2.4-1-${LIBSOUP_DEB_VERSION}-amd64.deb::${_LIBSOUP_DEB_BASE}/libsoup2.4-1_${LIBSOUP_DEB_VERSION}_amd64.deb")
+source_aarch64+=("libsoup2.4-1-${LIBSOUP_DEB_VERSION}-arm64.deb::${_LIBSOUP_DEB_BASE}/libsoup2.4-1_${LIBSOUP_DEB_VERSION}_arm64.deb")
+sha256sums=('643427b6e04fc47cd7d514af2c2349948d3b45f536c434ba8682dcb1d4314736'
+            '446bfe50e5e1cb027415b264a090cede1468dfbdc8b55e5ce14e9289b6134119'
+            '1dc6d6592fa08c44fb6a4efa0dc238e9e78352bb799ef2e1a92358b390868064'
+            'cdfb3a2ef3bf6b0dd9d17c7a279735db23bc54420f34bfd43606830557a922fe'
+            'fe0b92bb9bfa32010fe304da5427d9ca106e968bad0e62a5a569e3323a57443f'
+            'a3bd74aaf19123cc550cde71b5870d7dacf9883b7e7a85c90e03b508426c16c4'
+            '0e3a6c7cf7fa9eee7dcde7356e90ffa1cb312bffc0813a0bf123d2f918dc369d'
+            '739da3fca95d07fc3076522acc6b6c1b12b988047bd2fb3c87e37231e49f2e1f')
+sha256sums_x86_64=('7764b9f3d32be349678269aadfaac0e13d725f3ffa49c2cddd32427c6572792b'
+                   'd3eac276ef1db0230cba32b68f510eb694d25fd35b7c970c965d8fcc3398d319')
+sha256sums_aarch64=('f990a87247f22e5433fa5d4f32aaa258ea7298f098c3db44230ac774cd5a02fd'
+                   'e3a1948af523c072a6c40767ccbae332df8d876043f5678f75e6c42cad1ccb19')
+install=citrix-client.install
+
+package() {
+    cd "${srcdir}"
+    ICAROOT=/opt/Citrix/ICAClient
+    if [[ $CARCH == 'x86_64' ]]
+    then
+        ICADIR="$srcdir/linuxx64/linuxx64.cor"
+        PKGINF="Ver.core.linuxx64"
+   elif [[ $CARCH == 'aarch64' ]]
+    then
+        ICADIR="$srcdir/linuxarm64/linuxarm64.cor"
+        PKGINF="Ver.core.linuxarm64"
+    fi
+    # Debian multiarch path component for the bundled webkit2gtk-4.0 libs
+    # and the libsoup-2.4 .deb (matches Citrix's tarball layout).
+    ARCH_MULTIARCH="${CARCH}-linux-gnu"
+
+    mkdir -p "${pkgdir}$ICAROOT"
+
+    cd "$ICADIR"
+    install -m755 -t "${pkgdir}$ICAROOT" \
+            *.so *.DLL \
+            adapter AuthManagerDaemon icasessionmgr NativeMessagingHost \
+            PrimaryAuthManager ServiceRecord selfservice UtilDaemon wfica
+
+    # copy common directories
+    cp -rt "${pkgdir}$ICAROOT" aml clsync config gtk help icons keyboard keystore lib nls site usb util
+
+    # copy x86_64 only directories
+    if [[ $CARCH == 'x86_64' ]]
+    then
+        cp -rt "${pkgdir}$ICAROOT" bcr ceb
+    fi
+
+    # fix permissions
+    chmod -R a+r "${pkgdir}$ICAROOT"
+
+    # Install License
+    install -m644 -D -t "${pkgdir}$ICAROOT" nls/en.UTF-8/eula.txt
+    install -Dm644 nls/en.UTF-8/eula.txt "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+
+    # Install Version
+    install -m644 -D "${srcdir}/PkgId" "${pkgdir}$ICAROOT/pkginf/$PKGINF"
+
+    # create /config/.server to enable user customization using ~/.ICACLient/ overrides. Thanks Tomek
+    touch "${pkgdir}$ICAROOT/config/.server"
+
+    # Install wrapper script
+    install -m755 "${srcdir}/wfica.sh" "${pkgdir}$ICAROOT/wfica.sh"
+
+    ln -s gst_play1.0 "${pkgdir}/$ICAROOT/util/gst_play"
+    ln -s gst_read1.0 "${pkgdir}/$ICAROOT/util/gst_read"
+
+    # Dirty Hack
+    # wfica expects {module,wfclient,apssrv}.ini in $ICAROOT/config
+    # sadly these configs differ slightly by locale
+    lang=${LANG%%_*}
+    lang=${lang:-'en'}
+    [[ -d "${pkgdir}/$ICAROOT/nls/$lang" ]] || lang='en'
+    cp "${pkgdir}$ICAROOT/nls/$lang/module.ini" "${pkgdir}$ICAROOT/config/"
+    cp "${pkgdir}$ICAROOT/nls/$lang/appsrv.template" "${pkgdir}$ICAROOT/config/appsrv.ini"
+    cp "${pkgdir}$ICAROOT/nls/$lang/wfclient.template" "${pkgdir}$ICAROOT/config/wfclient.ini"
+
+    sed -i \
+        -e 's/Ceip=Enable/Ceip=Disable/' \
+        -e 's/DisableHeartBeat=False/DisableHeartBeat=True/' \
+        "${pkgdir}$ICAROOT/config/module.ini"
+    cd "${srcdir}"
+    # install freedesktop.org files
+    install -Dm644 -t "$pkgdir"/usr/share/applications citrix-{configmgr,conncenter,workspace,wfica}.desktop
+    # install scripts
+    install -Dm755 -t "${pkgdir}$ICAROOT" wfica.sh wfica_assoc.sh
+
+    chmod +x "${pkgdir}$ICAROOT"/util/{ctx_app_bind,ctxcwalogd,icalicense.sh,setlog}
+    if [ $CARCH != 'aarch64' ]
+    then
+        chmod +x "${pkgdir}$ICAROOT"/util/HdxRtcEngine
+    fi
+
+    # install systemd unit files
+    install -Dm755 -t "${pkgdir}/usr/lib/systemd/system" "ctxcwalogd.service"
+    install -Dm755 -t "${pkgdir}/usr/lib/systemd/system" "ctxusbd.service"
+
+    # ----------------------------------------------------------------------
+    # D.3: bundle webkit2gtk-4.0 from the Citrix tarball.
+    # See docs/d3-bundle-implementation-plan.md for the rationale and
+    # verified offsets / NUL padding math.
+    # ----------------------------------------------------------------------
+
+    # Phase 1: extract the inner webkit2gtk-4.0 tarball.
+    WEBKIT_TARBALL="$srcdir/linuxx64/linuxx64.cor/Webkit2gtk4.0/webkit2gtk-4.0.tar.gz"
+    if [[ $CARCH == 'aarch64' ]]; then
+        WEBKIT_TARBALL="$srcdir/linuxarm64/linuxarm64.cor/Webkit2gtk4.0/webkit2gtk-4.0.tar.gz"
+    fi
+    WEBKIT_PKG_DIR="${WEBKIT_TARBALL%.tar.gz}-package"
+    if [[ ! -f "$WEBKIT_TARBALL" ]]; then
+        echo "FATAL: webkit2gtk-4.0 bundle tarball not found at $WEBKIT_TARBALL" >&2
+        echo "  (Citrix may have changed the tarball layout in this release.)" >&2
+        return 1
+    fi
+    bsdtar -xf "$WEBKIT_TARBALL" -C "$(dirname "$WEBKIT_TARBALL")"
+
+    # Phase 2: copy the libs to $ICAROOT/lib/. The trailing /. flattens
+    # the Debian multiarch path usr/lib/<arch>-linux-gnu/ but preserves
+    # the webkit2gtk-4.0/ subdir (so helpers land at
+    # $ICAROOT/lib/webkit2gtk-4.0/..., not $ICAROOT/lib/...).
+    cp -a "$WEBKIT_PKG_DIR/usr/lib/$ARCH_MULTIARCH/." "${pkgdir}$ICAROOT/lib/"
+
+    # Phase 3: set RUNPATH on the main libs. The .so will dlopen its
+    # siblings (libicu*.so.70.1, libjavascriptcoregtk-4.0.so.18) via
+    # $ORIGIN at runtime. This replaces Debian's absolute /usr/lib/...
+    # paths and means we don't need a system webkit2gtk.
+    for f in "${pkgdir}$ICAROOT"/lib/libwebkit2gtk-4.0.so.37.56.4 \
+             "${pkgdir}$ICAROOT"/lib/libjavascriptcoregtk-4.0.so.18.20.4 \
+             "${pkgdir}$ICAROOT"/lib/libicu*.so.70.1; do
+        [ -f "$f" ] && patchelf --set-rpath '$ORIGIN' "$f"
+    done
+
+    # Phase 4: set RUNPATH on the helper binaries. They are spawned by
+    # libwebkit2gtk-4.0.so.37 via exec() and need to find their sibling
+    # libs in the same dir.
+    for f in "${pkgdir}$ICAROOT"/lib/webkit2gtk-4.0/{WebKitNetworkProcess,WebKitWebProcess,MiniBrowser}; do
+        [ -f "$f" ] && patchelf --set-rpath '$ORIGIN' "$f"
+    done
+
+    # Phase 5: string-patch the hardcoded Debian multiarch paths inside
+    # libwebkit2gtk-4.0.so.37. There are exactly two such paths in
+    # 26.01.0.150:
+    #   - /usr/lib/<arch>-linux-gnu/webkit2gtk-4.0          (helpers dir)
+    #   - /usr/lib/<arch>-linux-gnu/webkit2gtk-4.0/injected-bundle/  (injected bundle)
+    # The replacement path /opt/citrix-webkit/webkit2gtk-4.0[.../] is
+    # shorter than the original; we NUL-pad to keep the on-disk section
+    # size unchanged (the dynamic loader cares about section sizes).
+    # The padding count is computed per match by perl (s{}{}ge); a
+    # hardcoded NUL count would be wrong for paths of different lengths.
+    #
+    # The replacement tree is installed at /opt/citrix-webkit/ below.
+    WEBKIT_SO="${pkgdir}$ICAROOT/lib/libwebkit2gtk-4.0.so.37.56.4"
+    mkdir -p "${pkgdir}/opt/citrix-webkit"
+    cp -a "$WEBKIT_PKG_DIR/usr/lib/$ARCH_MULTIARCH/webkit2gtk-4.0" "${pkgdir}/opt/citrix-webkit/"
+
+    # The two single-quoted strings are concatenated with the bash
+    # double-quoted $ARCH_MULTIARCH so the perl sees the right multiarch
+    # at build time. Inside the perl, $1 etc. are perl variables
+    # (single-quoted, no bash interpolation).
+    perl -0777 -pe '
+        s{(/usr/lib/'"$ARCH_MULTIARCH"'/webkit2gtk-4\.0(?:/injected-bundle/)?)}
+         { my $o = $1; my $n = $o; $n =~ s{^/usr/lib/'"$ARCH_MULTIARCH"'}{/opt/citrix-webkit}; $n . ("\x00" x (length($o) - length($n))) }ge
+    ' -i "$WEBKIT_SO"
+
+    # Phase 6: make Citrix binaries prefer the bundled libs.
+    # selfservice already has an existing DT_RPATH (Citrix's own);
+    # patchelf --set-rpath cannot overwrite DT_RPATH, so we use
+    # --force-rpath to switch it to DT_RUNPATH and overwrite.
+    patchelf --force-rpath --set-rpath '$ORIGIN/lib' "${pkgdir}$ICAROOT/selfservice"
+    [ -f "${pkgdir}$ICAROOT/lib/UIDialogLibWebKit3.so" ] && \
+        patchelf --set-rpath '$ORIGIN' "${pkgdir}$ICAROOT/lib/UIDialogLibWebKit3.so"
+
+    # Phase 7: extract libsoup-2.4.so.1 from the libsoup2.4-1 Debian
+    # package. Citrix does not bundle libsoup-2.4, and Arch's libsoup
+    # (the system package) is not enough on its own if the user does
+    # not have AUR webkit2gtk installed. We pin to Debian bookworm
+    # because the bundled webkit2gtk-4.0 2.36.0 was built against
+    # libsoup 2.74.x from there.
+    # Find the .deb in $srcdir. The source URL ends with
+    # libsoup2.4-1-${LIBSOUP_DEB_VERSION}_amd64.deb / _arm64.deb; the
+    # bsdtar-restored name is libsoup2.4-1-${LIBSOUP_DEB_VERSION}-amd64.deb
+    # (bsdtar normalises _ to - in the local filename). Match the local
+    # form.
+    local deb_arch="amd64"
+    [[ $CARCH == aarch64 ]] && deb_arch="arm64"
+    LIBSOUP_DEB_SRC="$srcdir/libsoup2.4-1-${LIBSOUP_DEB_VERSION}-${deb_arch}.deb"
+    if [[ ! -f "$LIBSOUP_DEB_SRC" ]]; then
+        echo "FATAL: libsoup2.4-1 .deb not found at $LIBSOUP_DEB_SRC" >&2
+        echo "  Did the Debian URL change? See the LIBSOUP_DEB_VERSION comment near the top of the PKGBUILD." >&2
+        return 1
+    fi
+    # A .deb is an ar(1) archive (Debian binary package format 2.0) with
+    # three members: debian-binary, control.tar.{xz,zst}, data.tar.{xz,zst}.
+    # ar(1) is in binutils (base-devel); bsdtar does not recursively unpack
+    # a .deb. We only need the data.tar.* payload.
+    LIBSOUP_DEB_TMP=$(mktemp -d /tmp/libsoup-deb.XXXXXX)
+    pushd "$LIBSOUP_DEB_TMP" >/dev/null
+    ar x "$LIBSOUP_DEB_SRC"
+    DATA_TAR=$(ls data.tar.* 2>/dev/null | head -n1)
+    if [[ -z "$DATA_TAR" ]]; then
+        echo "FATAL: no data.tar.* inside $LIBSOUP_DEB_SRC" >&2
+        popd >/dev/null
+        rm -rf "$LIBSOUP_DEB_TMP"
+        return 1
+    fi
+    bsdtar -xf "$DATA_TAR"
+    popd >/dev/null
+    # Install libsoup-2.4.so.1 (the SONAME, the real .so file, not the
+    # .so.1 -> .so.1.X.Y symlink). The .deb typically lays out:
+    #   usr/lib/<arch>-linux-gnu/libsoup-2.4.so.1.X.Y     (the file)
+    #   usr/lib/<arch>-linux-gnu/libsoup-2.4.so.1        (symlink to file)
+    #   usr/lib/<arch>-linux-gnu/libsoup-2.4.so          (dev symlink, optional)
+    # We install the .so.1.X.Y file under the SONAME libsoup-2.4.so.1
+    # and replicate the symlinks so the loader can resolve the SONAME
+    # (some loaders only walk through the .so -> .so.1 chain).
+    LIBSOUP_SO_SRC=$(find "$LIBSOUP_DEB_TMP" -name 'libsoup-2.4.so.1.*' -type f | head -n1)
+    if [[ -z "$LIBSOUP_SO_SRC" ]]; then
+        echo "FATAL: libsoup-2.4.so.1.X.Y not found inside $LIBSOUP_DEB_SRC" >&2
+        rm -rf "$LIBSOUP_DEB_TMP"
+        return 1
+    fi
+    install -m755 "$LIBSOUP_SO_SRC" "${pkgdir}$ICAROOT/lib/libsoup-2.4.so.1"
+    # Replicate the rest of the symlink chain from the .deb. The .deb
+    # typically has libsoup-2.4.so (dev symlink, may be present) and a
+    # libsoup-2.4.so.1 symlink that points to the SONAME. We must skip
+    # libsoup-2.4.so.1 here because we just installed the REAL file at
+    # that SONAME path; otherwise the cp would overwrite the file with
+    # the .deb's symlink and the loader would fail to find the lib.
+    for f in "$LIBSOUP_DEB_TMP"/usr/lib/"$ARCH_MULTIARCH"/libsoup-2.4.so*; do
+        [[ -L "$f" ]] || continue
+        local bn
+        bn=$(basename "$f")
+        [[ "$bn" == "libsoup-2.4.so.1" ]] && continue
+        cp -a "$f" "${pkgdir}$ICAROOT/lib/$bn"
+    done
+    rm -rf "$LIBSOUP_DEB_TMP"
+}

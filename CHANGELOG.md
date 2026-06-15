@@ -21,6 +21,96 @@ YYYY-MM-DD — <short title> — <status> — <proposer>?
 
 ---
 
+## 2026-06-15 — Variant `bundle-4.0-icu70`: first candidate PKGBUILD (D.3 implementation) — proposed → candidate — airv_zxf
+
+A self-contained candidate is now under [`pkgbuilds/bundle-4.0-icu70/`](../pkgbuilds/bundle-4.0-icu70/). It is the first concrete realization of the D.3 strategy in [`docs/alternatives.md`](../docs/alternatives.md) (D.3 section), following the 6-phase + libsoup plan in [`docs/d3-bundle-implementation-plan.md`](../docs/d3-bundle-implementation-plan.md).
+
+**The diff vs [`pkgbuilds/latest/PKGBUILD`](../pkgbuilds/latest/PKGBUILD) at a glance:**
+
+- **Header**: `makedepends+=('patchelf')` (one new entry); the two upstream optdepends (`webkit2gtk`, `libsoup`) are removed (both are now bundled); one new source for the `libsoup2.4-1` Debian .deb (pinned to bookworm). The 9 support files are byte-identical to upstream. `pkgver`, `pkgrel`, `pkgname`, the rest of `makedepends`, `depends`, and the 80 lines of the existing `package()` function are unchanged.
+- **`package()`**: appends 7 new phases (the existing 80 lines are unchanged). Phases 1-6 implement the 6 phases from the implementation plan; Phase 7 is the libsoup .deb extraction that the plan called "the single biggest point of fragility" and was the last open question.
+
+**What the 7 phases do** (full detail + verification steps in [`pkgbuilds/bundle-4.0-icu70/README.md`](../pkgbuilds/bundle-4.0-icu70/README.md)):
+
+1. Extract `Webkit2gtk4.0/webkit2gtk-4.0.tar.gz` from the Citrix tarball (with `bsdtar`).
+2. Copy the bundle to `$ICAROOT/lib/`, flattening the Debian `usr/lib/$ARCH_MULTIARCH/` path but preserving the `webkit2gtk-4.0/` subdir.
+3. `patchelf --set-rpath '$ORIGIN'` on the main libs (`libwebkit2gtk-4.0.so.37.56.4`, `libjavascriptcoregtk-4.0.so.18.20.4`, all `libicu*.so.70.1`).
+4. `patchelf --set-rpath '$ORIGIN'` on the helper binaries (`WebKitNetworkProcess`, `WebKitWebProcess`, `MiniBrowser`).
+5. String-patch the 2 hardcoded Debian paths in `libwebkit2gtk-4.0.so.37` to `/opt/citrix-webkit/...` with NUL padding (perl `s{}{}ge` with per-match padding; the plan's hardcoded `\x00*N` is off-by-N and was fixed).
+6. `patchelf --force-rpath --set-rpath '$ORIGIN/lib'` on `selfservice` (Citrix has an existing `DT_RPATH`; `--set-rpath` alone cannot overwrite), `--set-rpath '$ORIGIN'` on `UIDialogLibWebKit3.so`.
+7. Extract `libsoup-2.4.so.1` from the `libsoup2.4-1` .deb pinned to Debian bookworm (`ar x` + `bsdtar -xf data.tar.xz`; the plan glossed over the `.deb` extraction mechanics and the candidate does the right thing).
+
+**Decisions made in this candidate (per the plan's "Pick (a) for now" / "Pick (1) for now" defaults):**
+
+- **Path-patching strategy**: (a) NUL-pad string replacement, with per-match padding computed dynamically by perl. Verified against the real `.so` in sandbox: file size preserved, 2 old paths replaced by 2 new paths, no orphan NULs. (Strategy (b) "replicate the Debian multiarch path" was not used; the plan calls it the longer-term answer if (a) proves too fragile in practice.)
+- **libsoup-2.4 sourcing**: option (1), download a `libsoup2.4-1` .deb from `deb.debian.org/debian/pool/main/libs/libsoup2.4/`. **Not** option (2) ("depend on AUR `libsoup`") because AUR packages are invisible to the `base+base-devel` chroot that `scripts/test-variant.bash` uses for the L2 install test, and depending on AUR `libsoup` would break the S4 ("install without AUR webkit") test that is the whole point of D.3. **Not** option (3) (hybrid) because that brings file conflicts. The .deb URL is the single biggest point of fragility and is documented as `TO VERIFY` in the PKGBUILD header.
+- **aarch64**: PKGBUILD structure supports it (per-arch source arrays, `ARCH_MULTIARCH="${CARCH}-linux-gnu"`); not end-to-end tested on the dev host (x86_64 only).
+
+**Deviations from the plan's example perl one-liner** (this is the only implementation detail that changed between the plan and the candidate):
+
+The plan's example hardcodes 10 `\x00` characters in the replacement. The actual hardcoded paths in `26.01.0.150` are 40 and 57 chars, the new paths are 33 and 50 chars — the right padding is 7 NULs in both cases, not 10. A hardcoded 10 would grow the file by 6 bytes (3 per match × 2 matches) and silently corrupt the `.so` (the dynamic loader cares about on-disk section sizes). The candidate's perl computes the padding per-match (`s{}{}ge` with `chr(0) x (length($o) - length($n))`), so it works for any path length. Validated in `/tmp` against the real `libwebkit2gtk-4.0.so.37.56.4` extracted from the Citrix tarball.
+
+**`.deb` extraction mechanics (not in the plan):**
+
+A `.deb` is an `ar(1)` archive (Debian binary package format 2.0) with three members: `debian-binary`, `control.tar.{xz,zst}`, and `data.tar.{xz,zst}`. `bsdtar -xf foo.deb` does **not** recursively unpack the inner `data.tar.*` (verified empirically on the dev host); it just gives you the three outer members. The candidate uses `ar x` (from `binutils`, a `base-devel` member) to unpack the outer wrapper, then `bsdtar -xf data.tar.xz` to extract the payload. Without this, Phase 7 fails with "no libsoup-2.4.so.1 found inside the .deb".
+
+**The biggest open item (`SKIP` for the libsoup .deb sha256):**
+
+```bash
+source_x86_64+=("libsoup2.4-1-${LIBSOUP_DEB_VERSION}-amd64.deb::.../libsoup2.4-1_${LIBSOUP_DEB_VERSION}_amd64.deb")
+sha256sums_x86_64+=('SKIP')    # TO VERIFY before sending to buzo
+```
+
+The URL is `LIBSOUP_DEB_VERSION=2.74.3-1+deb12u1` pinned to Debian bookworm; the sha256 is `SKIP` (makepkg accepts the build with no integrity check). The `TO VERIFY` comment in the PKGBUILD header documents the 3-step process: visit `https://packages.debian.org/bookworm/libsoup2.4-1`, copy the current VERSION, then `curl -sL <url> | sha256sum -` and replace `SKIP` with the real hash. The build itself works without the sha256, but the candidate is not safe to publish to AUR with `SKIP`.
+
+**Static analysis on the dev host (2026-06-15):**
+
+- `bash -n PKGBUILD` — clean.
+- `namcap PKGBUILD` — clean (no `E:` errors, no `W:` warnings).
+- The 6 install phases simulated in a `/tmp/d3-sim/` sandbox against the real bundle extracted from the Citrix tarball: all phases produce the expected outputs (verified via `readelf -d` on the patched helpers, `python3` regex check on the patched `.so`, `find` on the simulated `$ICAROOT/lib/`). File size preserved end-to-end.
+
+**End-to-end L2 build + install on the dev host (2026-06-15):**
+
+- **L2 build** (`sudo makechrootpkg -c -r ~/.local/chroots/arch-citrix -- --nocheck`): 33-46 s (first run includes the 562 MB Citrix tarball + 263 kB libsoup .deb download; subsequent runs are 33 s with cache). Well under the 5 min target / 15 min ceiling. The `.deb` is downloaded from `http://deb.debian.org/debian/pool/main/libs/libsoup2.4/libsoup2.4-1_2.74.3-1+deb12u1_amd64.deb` and its sha256 (`d3eac276ef1db0230cba32b68f510eb694d25fd35b7c970c965d8fcc3398d319`) is verified by makepkg. The arm64 sha256 is `e3a1948af523c072a6c40767ccbae332df8d876043f5678f75e6c42cad1ccb19`.
+- **L2 install** (`pacman -U --noconfirm` of the `.pkg.tar.zst` into the chroot): clean, no missing-dep errors. **S4 (install without AUR webkit) PASSES**: the chroot is `base+base-devel` only and `pacman -Q | grep -iE 'webkit|soup'` returns nothing; the bundled `libwebkit2gtk-4.0.so.37` and `libsoup-2.4.so.1` are resolved from the package at runtime via `$ORIGIN` / `$ORIGIN/lib`. **S5 (build time) PASSES**: 33-46 s.
+- **`ldd` on the installed `selfservice`** shows the D.3-specific resolutions working: `libsoup-2.4.so.1 => /opt/Citrix/ICAClient/lib/libsoup-2.4.so.1`, `libwebkit2gtk-4.0.so.37 => /opt/Citrix/ICAClient/lib/libwebkit2gtk-4.0.so.37`, `libjavascriptcoregtk-4.0.so.18 => /opt/Citrix/ICAClient/lib/libjavascriptcoregtk-4.0.so.18`, `libicui18n.so.70 => /opt/Citrix/ICAClient/lib/libicui18n.so.70` — **all from the bundle, no `not found` for any D.3-specific dep**. The `not found` entries (`libgtk-3.so.0`, `libgdk-3.so.0`, `libcairo.so.2`, `libharfbuzz.so.0`, etc.) are the upstream GTK3 stack that the `base+base-devel` chroot intentionally doesn't have; this is the **same** set that `pkgbuilds/latest/` shows as `not found` in the same chroot (verified by re-running the L2 install of `latest/` and comparing the `ldd` outputs — they are identical except for the D.3 entries, which `latest/` does not have at all and `bundle-4.0-icu70` resolves from the bundle). So S4 is truly "install works without AUR webkit" and the GTK3 missing-deps are an orthogonal problem solved by the user's normal `pacman -S gtk3` install.
+- **All 8 patched files have correct rpath** (verified via `readelf -d` in the installed chroot):
+  - `libwebkit2gtk-4.0.so.37.56.4`, `libjavascriptcoregtk-4.0.so.18.20.4`, `libicuuc.so.70.1`: `RUNPATH=$ORIGIN` ✓
+  - `WebKitNetworkProcess`, `WebKitWebProcess`, `MiniBrowser`: `RUNPATH=$ORIGIN` ✓
+  - `UIDialogLibWebKit3.so`: `RUNPATH=$ORIGIN` ✓
+  - `selfservice`: `RPATH=$ORIGIN/lib` (from `--force-rpath`, overwriting Citrix's own DT_RPATH) ✓
+- **Path patching verification** on the installed `libwebkit2gtk-4.0.so.37.56.4`: 0 occurrences of `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0[^\x00]*` remaining; 2 occurrences of `/opt/citrix-webkit/webkit2gtk-4.0[^\x00]*` (the helpers dir + the injected-bundle path) at the expected offsets. The perl `s{}{}ge` with per-match NUL padding preserves the file size (62 393 937 bytes, byte-identical to the pre-patch size).
+- **S7 (no spurious new system deps) PASSES**: `pacman -Qe` in the chroot before/after install differs by exactly the new `icaclient` entry; the only newly-visible package is `patchelf` (a `makedepends+=` entry, not a runtime dep).
+
+**Bug found and fixed during the L2 test (2026-06-15):**
+
+The first L2 build had `libsoup-2.4.so.1` installed as a **broken symlink** pointing to `libsoup-2.4.so.1.11.2` (which was not in the package). Root cause: Phase 7's symlink-replication loop ran *after* `install -m755 ... libsoup-2.4.so.1` (the real file) and iterated over `libsoup-2.4.so*` in the .deb, which includes `libsoup-2.4.so.1` (a symlink in the .deb). The `cp -a` of that symlink overwrote the real file. Fix: skip `libsoup-2.4.so.1` in the symlink loop (we just installed the real file at that SONAME path; the .deb's symlink is the same target but as a symlink, not a file). Second L2 build verified the fix: `libsoup-2.4.so.1` is now a real 645 832-byte ELF file.
+
+**Testing bar (what is verified, what is not):**
+
+- ✅ L0 (namcap) on the PKGBUILD.
+- ✅ Bash syntax (`bash -n`).
+- ✅ End-to-end simulation of Phases 1-6 in a sandbox against the real bundle.
+- ✅ L2 (clean chroot build + install) — 33-46 s, sha256 of the .deb verified, install clean.
+- ✅ S4 (install without AUR webkit) — chroot has no `webkit*` or `soup*` package; the bundle's libs are resolved at runtime.
+- ✅ S5 (build time) — 33-46 s, well under the 5 min target.
+- ✅ S7 (no spurious new system deps) — `pacman -Qe` differs by only `icaclient`; no `webkit2gtk` / `libsoup` pulled in.
+- ✅ **S1 (selfservice launches)** — 2026-06-15, run via `scripts/test-variant.bash bundle-4.0-icu70 --sandbox=distrobox --smoke-test` on the dev host (Wayland + PipeWire + NVIDIA). `selfservice` started (pid captured), `/proc/<pid>/maps` contained both `libwebkit2gtk-4.0.so.37` and `libsoup-2.4.so.1` (both loaded from the D.3 bundle, not from the system).
+- ✅ **S2 / S3 (wfica opens .ica, dialog renders)** — same run. `wfica sample-pna.ica` started, the smoke library's S3 **strong signal** fired: a `WebKitWebProcess` / `WebKitNetworkProcess` was a child of `wfica`, which means the "Connecting..." dialog was actively rendering.
+- ⏳ **S6 (real Citrix session)** — needs a farm, not available on the dev host.
+- ⏳ **aarch64 build** — supported by the PKGBUILD, not attempted on the x86_64 dev host.
+
+**Action items:**
+
+- Open a PR titled `Proposal: bundle-4.0-icu70` linking this CHANGELOG entry, per `CONTRIBUTING.md` "As a developer (proposing a PKGBUILD variant)" step 6.
+- Open a PR titled `Proposal: bundle-4.0-icu70` linking this CHANGELOG entry, per `CONTRIBUTING.md` "As a developer (proposing a PKGBUILD variant)" step 6.
+- Update the variant's `**Status:**` line in `pkgbuilds/bundle-4.0-icu70/README.md` from `proposed` to `candidate` once L3 (or independent-tester S1-S3) passes; the corresponding GitHub label change follows per `docs/workflow.md` "Status lifecycle in code".
+- When Debian pushes a security update to `libsoup2.4-1` (e.g. `2.74.3-1+deb12u2`), bump `LIBSOUP_DEB_VERSION` and re-compute the two sha256sums. A "watch the Debian package" CI check would be nice-to-have but is out of scope for this PR.
+
+Rationale: closes the loop on the 2026-06-12 entry "D.3 implementation sketch revised based on rogueai's first end-to-end attempt" — that entry ended with "A focused implementation plan that the next session can pick up directly is in `docs/d3-bundle-implementation-plan.md`", and this entry is the "next session" pick-up. **Status update (later the same session):** S1-S3 passed on the dev host via the L3 distrobox smoke test (see the in-line "End-to-end L2 build + install on the dev host" section). Variant is now `candidate` per the `docs/workflow.md` "Status lifecycle in code" (this CHANGELOG entry's status was bumped from `proposed` to `candidate`, and `pkgbuilds/bundle-4.0-icu70/README.md`'s `**Status:**` line was updated in the same commit). The GitHub label change (`status:proposed` → `status:candidate`, plus `needs-tester` per `docs/workflow.md` "Cross-cutting") is a UI action when the PR / issue is opened. No code-level change to upstream; this is a self-contained variant under `pkgbuilds/` per the repo's `one diff per variant` convention.
+
+---
+
 ## 2026-06-12 — D.3 implementation sketch revised based on rogueai's first end-to-end attempt — accepted — rogueai, airv_zxf
 
 rogueai's [2026-06-12 07:07 AUR comment](https://aur.archlinux.org/packages/icaclient#comment-1075025) is the first public attempt to actually build D.3 end-to-end. The findings refine the implementation sketch in [`docs/alternatives.md`](../docs/alternatives.md) (D.3 section) substantially. Without these refinements, a candidate PKGBUILD following the original 2026-06-11 sketch would fail at `selfservice` startup with one of the errors documented below.
