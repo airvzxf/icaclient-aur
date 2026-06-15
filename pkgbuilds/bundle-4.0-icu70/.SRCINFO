@@ -42,12 +42,12 @@ pkgbase = icaclient
 	sha256sums = a3bd74aaf19123cc550cde71b5870d7dacf9883b7e7a85c90e03b508426c16c4
 	sha256sums = 0e3a6c7cf7fa9eee7dcde7356e90ffa1cb312bffc0813a0bf123d2f918dc369d
 	sha256sums = 739da3fca95d07fc3076522acc6b6c1b12b988047bd2fb3c87e37231e49f2e1f
-	source_x86_64 = icaclient-x64-26.01.0.150.tar.gz::https://downloads.citrix.com/25945/linuxx64-26.01.0.150.tar.gz?__gda__=exp=1781513751~acl=/*~hmac=6b4502500bb967cf8474efc45c1f14957e4011316d2885ff238eb546b172dc7a
-	source_x86_64 = libsoup2.4-1-2.74.3-1+deb12u1-amd64.deb::http://deb.debian.org/debian/pool/main/libs/libsoup2.4/libsoup2.4-1_2.74.3-1+deb12u1_amd64.deb
+	source_x86_64 = icaclient-x64-26.01.0.150.tar.gz::https://downloads.citrix.com/25945/linuxx64-26.01.0.150.tar.gz?__gda__=exp=1781550722~acl=/*~hmac=8975e9cfc58996d5c9ca01e1d3d9cf595c870a3912a200e2fa4c8d26d10c089d
+	source_x86_64 = libsoup2.4-1-2.74.3-1+deb12u1-amd64.deb::https://deb.debian.org/debian/pool/main/libs/libsoup2.4/libsoup2.4-1_2.74.3-1+deb12u1_amd64.deb
 	sha256sums_x86_64 = 7764b9f3d32be349678269aadfaac0e13d725f3ffa49c2cddd32427c6572792b
 	sha256sums_x86_64 = d3eac276ef1db0230cba32b68f510eb694d25fd35b7c970c965d8fcc3398d319
-	source_aarch64 = icaclient-arm64-26.01.0.150.tar.gz::https://downloads.citrix.com/25945/linuxarm64-26.01.0.150.tar.gz?__gda__=exp=1781513751~acl=/*~hmac=6b4502500bb967cf8474efc45c1f14957e4011316d2885ff238eb546b172dc7a
-	source_aarch64 = libsoup2.4-1-2.74.3-1+deb12u1-arm64.deb::http://deb.debian.org/debian/pool/main/libs/libsoup2.4/libsoup2.4-1_2.74.3-1+deb12u1_arm64.deb
+	source_aarch64 = icaclient-arm64-26.01.0.150.tar.gz::https://downloads.citrix.com/25945/linuxarm64-26.01.0.150.tar.gz?__gda__=exp=1781550722~acl=/*~hmac=8975e9cfc58996d5c9ca01e1d3d9cf595c870a3912a200e2fa4c8d26d10c089d
+	source_aarch64 = libsoup2.4-1-2.74.3-1+deb12u1-arm64.deb::https://deb.debian.org/debian/pool/main/libs/libsoup2.4/libsoup2.4-1_2.74.3-1+deb12u1_arm64.deb
 	sha256sums_aarch64 = f990a87247f22e5433fa5d4f32aaa258ea7298f098c3db44230ac774cd5a02fd
 	sha256sums_aarch64 = e3a1948af523c072a6c40767ccbae332df8d876043f5678f75e6c42cad1ccb19
 

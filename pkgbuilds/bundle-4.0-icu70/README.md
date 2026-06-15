@@ -57,12 +57,13 @@ Each phase has a verification step baked into the implementation plan; this sect
 | # | Phase | Key tool | Verification |
 |---|---|---|---|
 | 1 | Extract `webkit2gtk-4.0.tar.gz` from the Citrix tarball | `bsdtar` | `ls $WEBKIT_PKG_DIR/usr/lib/$ARCH_MULTIARCH/` is non-empty |
-| 2 | Copy the bundle libs to `$ICAROOT/lib/` (flattens the Debian `usr/lib/$ARCH_MULTIARCH/` path, preserves the `webkit2gtk-4.0/` subdir) | `cp -a .../.` | `ls $ICAROOT/lib/libwebkit2gtk-4.0.so.37.56.4` AND `ls $ICAROOT/lib/webkit2gtk-4.0/WebKitNetworkProcess` |
-| 3 | `patchelf --set-rpath '$ORIGIN'` on the main libs (the .so + jscore + ICU 70) | `patchelf` | `readelf -d` shows `RUNPATH=$ORIGIN` |
-| 4 | `patchelf --set-rpath '$ORIGIN'` on the helper binaries (`WebKitNetworkProcess`, `WebKitWebProcess`, `MiniBrowser`) | `patchelf` | `readelf -d` on each helper shows `RUNPATH=$ORIGIN` |
-| 5 | String-patch the 2 hardcoded `/usr/lib/$ARCH_MULTIARCH/webkit2gtk-4.0[.../]` paths in `libwebkit2gtk-4.0.so.37` to `/opt/citrix-webkit/...` with NUL padding | `perl -0777 -pe` | `python3 -c "import re; ..."` returns 2 new paths and 0 old paths; file size unchanged |
-| 6 | `patchelf --force-rpath --set-rpath '$ORIGIN/lib'` on `selfservice` (Citrix's binary has an existing DT_RPATH; `--set-rpath` alone cannot overwrite it) and `--set-rpath '$ORIGIN'` on `UIDialogLibWebKit3.so` | `patchelf` | `readelf -d` shows the new `RPATH`/`RUNPATH` |
-| 7 | Extract `libsoup-2.4.so.1` from the `libsoup2.4-1` .deb pinned to bookworm, plus the `.so` / `.so.1` symlinks | `ar x` + `bsdtar` | `ls $ICAROOT/lib/libsoup-2.4.so.1` is a real file (not a broken symlink) |
+| 2 | Copy the bundle libs to `$ICAROOT/lib/` (flattens the Debian `usr/lib/$ARCH_MULTIARCH/` path, preserves the `webkit2gtk-4.0/` subdir) | `cp -a .../.` | `ls $ICAROOT/lib/libwebkit2gtk-4.0.so.37.56.4` AND `ls $ICAROOT/lib/webkit2gtk-4.0/WebKitNetworkProcess`; explicit sanity check for the main .so post-cp |
+| 3 | `patchelf --set-rpath '$ORIGIN'` on the main libs (the .so + jscore + ICU 70) | `patchelf` | `readelf -d` shows `RUNPATH=$ORIGIN`; counter `_d3_p3_patched >= 3` (forward-compat guard for ICU version changes) |
+| 4 | `patchelf --set-rpath '$ORIGIN'` on the helper binaries (`WebKitNetworkProcess`, `WebKitWebProcess`, `MiniBrowser`); `WebKitNetworkProcess` missing is FATAL, the other two missing is WARNING | `patchelf` | `readelf -d` on each helper shows `RUNPATH=$ORIGIN` |
+| 5 | String-patch the at-least-2 hardcoded `/usr/lib/$ARCH_MULTIARCH/webkit2gtk-4.0[.../]` paths in `libwebkit2gtk-4.0.so.37` to `/opt/citrix-webkit/...` with NUL padding; multiarch string is `\Q`-escaped for forward-compat | `perl -0777 -pe` | file size unchanged, `readelf -h` still valid, `strings` no longer shows old Debian path (or the injected-bundle subpath) |
+| 6 | `patchelf --force-rpath --set-rpath '$ORIGIN/lib'` on `selfservice` (Citrix's binary has an existing DT_RPATH; `--set-rpath` alone cannot overwrite it) and `--set-rpath '$ORIGIN'` on `UIDialogLibWebKit3.so` (missing UIDialogLibWebKit3.so is FATAL — load-bearing for S3) | `patchelf` | `readelf -d` shows the new `RPATH`/`RUNPATH` |
+| 7 | Extract `libsoup-2.4.so.1` from the `libsoup2.4-1` .deb pinned to bookworm, plus the `.so` / `.so.1` symlinks (skip the SONAME in the symlink loop to keep the real file we just `install -m755`'d) | `ar x` + `bsdtar` | `ls $ICAROOT/lib/libsoup-2.4.so.1` is a real file (not a broken symlink); exactly one match in the .deb |
+| post | End-of-package cross-phase `ldd` check on `libwebkit2gtk-4.0.so.37.56.4` and `libjavascriptcoregtk-4.0.so.18.20.4` for the bundled deps (libicu*, libjavascriptcoregtk, libsoup-2.4.so.1) | `ldd` | none of the bundled deps show `not found` |
 
 ## Implementation choices (and why we deviated from the plan)
 
@@ -72,7 +73,7 @@ The plan at [docs/d3-bundle-implementation-plan.md](../../docs/d3-bundle-impleme
    - `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0` (40 chars) — replacement 33 chars → 7 NULs
    - `/usr/lib/x86_64-linux-gnu/webkit2gtk-4.0/injected-bundle/` (57 chars) — replacement 50 chars → 7 NULs
 
-   The candidate's perl computes the padding per-match (`s{}{}ge`), so it works for any path length and any multiarch (`x86_64-linux-gnu`, `aarch64-linux-gnu`). Validated in sandbox against the real `.so`: file size preserved, both old paths replaced, both new paths land at the expected offsets.
+   The candidate's perl computes the padding per-match (`s{}{}ge`), so it works for any path length and any multiarch (`x86_64-linux-gnu`, `aarch64-linux-gnu`), and `die`s with a clear FATAL message if a future Citrix release changes the multiarch path such that the replacement becomes longer than the original (the day Strategy (a) stops working and we must switch to (b)). Validated in sandbox against the real `.so`: file size preserved, both old paths replaced, both new paths land at the expected offsets. The Phase 5 post-patch verification additionally runs `readelf -h` and `strings | grep -qF` on the patched `.so` to catch any silent corruption.
 
 2. **`bsdtar` is not enough for `.deb` extraction.** The plan treats the libsoup .deb as if `bsdtar -xf foo.deb` would unpack it; it does not (it unpacks the outer ar wrapper but does not recursively extract the inner `data.tar.*`). The candidate uses `ar x` (from `binutils`, in `base-devel`) to unpack the .deb, then `bsdtar -xf data.tar.xz` to extract the payload.
 
@@ -94,6 +95,14 @@ The plan at [docs/d3-bundle-implementation-plan.md](../../docs/d3-bundle-impleme
 
 ## How to test
 
+For an end-to-end S1/S3 GUI smoke test on a host with a display server (Wayland or X11), run:
+
+```bash
+scripts/test-variant.bash bundle-4.0-icu70 --sandbox=distrobox --smoke-test
+# or
+scripts/test-variant.bash bundle-4.0-icu70 --sandbox=nspawn --smoke-test
+```
+
 The minimum bar for promoting this variant from `proposed` to `candidate`:
 
 - **L0 (namcap)**: clean, no `E:` errors. Verified on this dev host.
@@ -113,19 +122,24 @@ The minimum bar for promoting this variant from `proposed` to `candidate`:
 
 - **S6 (real Citrix session)**: ⏭️ skipped on the dev host (no farm). S7 (no spurious new system deps): verified at L2 install — `pacman -Qe` in the chroot before/after install differs by exactly the new `icaclient` entry.
 
-For an end-to-end S1/S3 GUI test, run:
-```bash
-scripts/test-variant.bash bundle-4.0-icu70 --sandbox=distrobox
-# or
-scripts/test-variant.bash bundle-4.0-icu70 --sandbox=nspawn --smoke-test
-```
-
 ## Known gaps
 
-- **The libsoup .deb URL is `LIBSOUP_DEB_VERSION=2.74.3-1+deb12u1` placeholder, with `SKIP` for the sha256.** The URL needs to be verified against `https://packages.debian.org/bookworm/libsoup2.4-1` and the sha256 computed (`curl -sL <url> | sha256sum -`) before this is sent upstream. The build itself works with `SKIP` (no integrity check) but the candidate is not safe to publish to the AUR without the real sha256. See the `TO VERIFY` comment in the PKGBUILD header.
-- **No end-to-end GUI test (S1) was run on the dev host.** The build + chroot install passes; the GUI-level validation (does the storefront page actually render?) requires a tester with a display server and (ideally) a StoreFront account.
+- **The libsoup .deb URL is pinned to `LIBSOUP_DEB_VERSION=2.74.3-1+deb12u1`, with verified sha256s** (`d3eac276ef1db0230cba32b68f510eb694d25fd35b7c970c965d8fcc3398d319` amd64, `e3a1948af523c072a6c40767ccbae332df8d876043f5678f75e6c42cad1ccb19` arm64; verified 2026-06-15 via `curl -sL <url> | sha256sum -`). When Debian publishes a security update to `libsoup2.4-1` (e.g. `2.74.3-1+deb12u2`), bump `LIBSOUP_DEB_VERSION` and re-compute the two hashes. The PKGBUILD header documents the procedure and points at `snapshot.debian.org` as a fallback if `deb.debian.org` reorganises the pool.
+- **S1-S3 GUI smoke test passed on the dev host** (Wayland + PipeWire + NVIDIA) via `scripts/test-variant.bash bundle-4.0-icu70 --sandbox=distrobox --smoke-test` on 2026-06-15 — see the [CHANGELOG entry](../../CHANGELOG.md) "2026-06-15 — Variant `bundle-4.0-icu70`" → "S1 (selfservice launches)" and "S2 / S3 (wfica opens .ica, dialog renders)". An independent tester (different distro, different StoreFront) is still recommended before promoting to `accepted` and sending to buzo.
 - **No real Citrix session test (S6) was run.** No farm on the dev host.
 - **No aarch64 build was attempted** on the dev host (x86_64 only). The PKGBUILD structure supports it; the bundle layout is assumed to mirror x86_64 (verified by the plan, not by the dev host).
-- **The plan's perl one-liner is off-by-N** for any path length other than the one it was tested against. The candidate uses a per-match NUL padding computation (perl `s{}{}ge`) to be robust. This is a deviation from the plan, not from its intent.
+- **The plan's perl one-liner is off-by-N** for any path length other than the one it was tested against. The candidate uses a per-match NUL padding computation (perl `s{}{}ge`) to be robust, and a `die` guard against the day Citrix's multiarch path becomes longer than `/opt/citrix-webkit/`. This is a deviation from the plan, not from its intent.
 - **Citrix ships webkit2gtk 2.36.0 with unpatched CVEs** ([WSA-* advisories](https://webkitgtk.org/security.html)). The README in the candidate's installed package links to the upstream Citrix tarball; D.3 ships what Citrix ships. Out of scope to fix.
-- **The `--force-rpath` on `selfservice` produces a `DT_RPATH` (not `DT_RUNPATH`)** because that's what `--force-rpath` does. The plan's claim that it "switches to DT_RUNPATH" is incorrect. For our purposes both are equivalent; documenting here to avoid confusion.
+- **The `--force-rpath` on `selfservice` produces a `DT_RPATH` (not `DT_RUNPATH`)** because that's what `--force-rpath` does. For our purposes both are equivalent; documenting here to avoid confusion.
+- **Citrix's download URL contains a time-limited `?__gda__=...` token** that expires. When makepkg fails to download the Citrix tarball with HTTP 403, re-run `makepkg` from the source PKGBUILD (not from a stale `.SRCINFO` pinned to an old token); makepkg re-curls the page and re-extracts the new token. Inherited from the upstream PKGBUILD; not a D.3-specific issue.
+
+## Pre-`accepted` checklist
+
+Before promoting this variant from `candidate` to `accepted` (and before sending to buzo), all of the following must be true:
+
+- [ ] At least 2 independent testers (different distro, different StoreFront) have run the S1-S3 smoke test successfully.
+- [ ] A aarch64 build was attempted (the dev host is x86_64 only).
+- [ ] S6 (real Citrix session) was tested at least once.
+- [ ] The PKGBUILD passes `namcap` and `bash -n` clean (re-run after any PKGBUILD edit; both currently pass on the dev host).
+
+Mark these checkboxes as they are completed in the PR description.

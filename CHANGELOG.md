@@ -54,14 +54,14 @@ The plan's example hardcodes 10 `\x00` characters in the replacement. The actual
 
 A `.deb` is an `ar(1)` archive (Debian binary package format 2.0) with three members: `debian-binary`, `control.tar.{xz,zst}`, and `data.tar.{xz,zst}`. `bsdtar -xf foo.deb` does **not** recursively unpack the inner `data.tar.*` (verified empirically on the dev host); it just gives you the three outer members. The candidate uses `ar x` (from `binutils`, a `base-devel` member) to unpack the outer wrapper, then `bsdtar -xf data.tar.xz` to extract the payload. Without this, Phase 7 fails with "no libsoup-2.4.so.1 found inside the .deb".
 
-**The biggest open item (`SKIP` for the libsoup .deb sha256):**
+**libsoup .deb sha256 — resolved 2026-06-15:**
 
 ```bash
 source_x86_64+=("libsoup2.4-1-${LIBSOUP_DEB_VERSION}-amd64.deb::.../libsoup2.4-1_${LIBSOUP_DEB_VERSION}_amd64.deb")
-sha256sums_x86_64+=('SKIP')    # TO VERIFY before sending to buzo
+sha256sums_x86_64+=('d3eac276ef1db0230cba32b68f510eb694d25fd35b7c970c965d8fcc3398d319')
 ```
 
-The URL is `LIBSOUP_DEB_VERSION=2.74.3-1+deb12u1` pinned to Debian bookworm; the sha256 is `SKIP` (makepkg accepts the build with no integrity check). The `TO VERIFY` comment in the PKGBUILD header documents the 3-step process: visit `https://packages.debian.org/bookworm/libsoup2.4-1`, copy the current VERSION, then `curl -sL <url> | sha256sum -` and replace `SKIP` with the real hash. The build itself works without the sha256, but the candidate is not safe to publish to AUR with `SKIP`.
+`LIBSOUP_DEB_VERSION=2.74.3-1+deb12u1` is pinned to Debian bookworm. Both sha256s are verified by `curl -sL <url> | sha256sum -` against the live `deb.debian.org` pool (amd64: `d3eac276ef1db0230cba32b68f510eb694d25fd35b7c970c965d8fcc3398d319`, arm64: `e3a1948af523c072a6c40767ccbae332df8d876043f5678f75e6c42cad1ccb19`); makepkg verifies on download. The PKGBUILD header documents the update procedure when Debian publishes a security update (bump `LIBSOUP_DEB_VERSION`, re-run `curl -sL <url> | sha256sum -`, paste the new hashes) and points at `snapshot.debian.org` as a fallback if the Debian pool URL changes.
 
 **Static analysis on the dev host (2026-06-15):**
 
@@ -102,7 +102,6 @@ The first L2 build had `libsoup-2.4.so.1` installed as a **broken symlink** poin
 
 **Action items:**
 
-- Open a PR titled `Proposal: bundle-4.0-icu70` linking this CHANGELOG entry, per `CONTRIBUTING.md` "As a developer (proposing a PKGBUILD variant)" step 6.
 - Open a PR titled `Proposal: bundle-4.0-icu70` linking this CHANGELOG entry, per `CONTRIBUTING.md` "As a developer (proposing a PKGBUILD variant)" step 6.
 - Update the variant's `**Status:**` line in `pkgbuilds/bundle-4.0-icu70/README.md` from `proposed` to `candidate` once L3 (or independent-tester S1-S3) passes; the corresponding GitHub label change follows per `docs/workflow.md` "Status lifecycle in code".
 - When Debian pushes a security update to `libsoup2.4-1` (e.g. `2.74.3-1+deb12u2`), bump `LIBSOUP_DEB_VERSION` and re-compute the two sha256sums. A "watch the Debian package" CI check would be nice-to-have but is out of scope for this PR.
