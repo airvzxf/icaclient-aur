@@ -1,0 +1,662 @@
+# Maintainer: Stephan Springer <buzo+arch@Lini.de>
+# Contributor: Moabeat <moabeat@berlin.de>
+# Contributor: Eric Liu <eric@hnws.me>
+# Contributor: Daniele Vazzola <daniele.vazzola@gmail.com>
+# Contributor: Ciarán Coffey <ciaran@ccoffey.ie>
+# Contributor: Matthew Gyurgyik <matthew@pyther.net>
+# Contributor: Giorgio Azzinnaro <giorgio@azzinna.ro>
+# Variant: airv_zxf (bundle-4.0-icu70)
+#
+# D.3 variant (see docs/alternatives.md and docs/d3-bundle-implementation-plan.md).
+# Extracts the prebuilt webkit2gtk-4.0 Debian bundle (shipped inside the Citrix
+# tarball) and bundles libsoup-2.4 (extracted from a libsoup2.4-1 Debian .deb
+# since Citrix does not ship it). selfservice launches without needing the
+# AUR webkit2gtk package.
+#
+# Implementation choices (per the implementation plan, 2026-06-12):
+#   - Path-patching strategy: (a) NUL-pad string replacement (Strategy (a)
+#     in the plan), with the per-match padding count computed dynamically
+#     by perl (s{}{}ge). The hardcoded \x00*N approach in the plan is
+#     off-by-N for some matches; the dynamic version is correct.
+#   - libsoup-2.4 sourcing: option (1) from the plan, download a
+#     libsoup2.4-1_*.deb from Debian's pool and unpack it.
+#   - aarch64 supported (not yet tested end-to-end on this dev host;
+#     structure verified for x86_64 only).
+
+pkgname=icaclient
+pkgver=26.01.0.150
+pkgrel=3
+pkgdesc="Citrix Workspace App (a.k.a. ICAClient, Citrix Receiver)"
+arch=(x86_64 aarch64)
+url='https://www.citrix.com/downloads/workspace-app/linux/workspace-app-for-linux-latest.html'
+license=(LicenseRef-Citrix)
+depends=(alsa-lib curl gst-plugins-base-libs libc++ libc++abi
+         libsecret libvorbis libxaw libxml2-legacy libxp
+         openssl speex)
+makedepends+=('patchelf')
+# bsdtar is in libarchive, which is a base-devel dep on Arch; no need to add.
+# webkit2gtk and libsoup optdepends from upstream are removed: the bundle
+# provides both (libwebkit2gtk-4.0.so.37 from the Citrix tarball, libsoup-2.4
+# from the libsoup2.4-1 .deb). See Phases 1-7 of package() for the layout.
+conflicts=('bin32-citrix-client' 'citrix-client')
+options=(!strip)
+backup=("opt/Citrix/ICAClient/config/appsrv.ini" "opt/Citrix/ICAClient/config/wfclient.ini" "opt/Citrix/ICAClient/config/module.ini")
+# Citrix's download URL contains a time-limited token (?__gda__=exp=...
+# ~acl=...~hmac=...) that is generated when makepkg fetches the page.
+# This means the .SRCINFO will contain a token that eventually expires
+# and makepkg will fail to download the tarball without a refresh.
+# To refresh: re-run makepkg from the source PKGBUILD (not the .SRCINFO
+# pinned to an old token); makepkg will re-curl the page and re-extract
+# the new token. This is upstream PKGBUILD behavior; the variant
+# inherits it unchanged.
+_dl_urls_="$(curl -sL "$url" | grep -F ".tar.gz?__gda__")"
+_dl_urls="$(echo "$_dl_urls_" | grep -F "$pkgver.tar.gz?__gda__")"
+_source64=https:"$(echo "$_dl_urls" | sed -En 's|^.*rel="(//.*/linuxx64-[^"]*)".*$|\1|p')"
+_sourceaarch64=https:"$(echo "$_dl_urls" | sed -En 's|^.*rel="(//.*/linuxarm64-[^"]*)".*$|\1|p')"
+source=('citrix-configmgr.desktop'
+        'citrix-conncenter.desktop'
+        'citrix-wfica.desktop'
+        'citrix-workspace.desktop'
+        'wfica.sh'
+        'wfica_assoc.sh'
+        'ctxcwalogd.service'
+        'ctxusbd.service')
+source_x86_64=("$pkgname-x64-$pkgver.tar.gz::$_source64")
+source_aarch64=("$pkgname-arm64-$pkgver.tar.gz::$_sourceaarch64")
+# libsoup-2.4 for the bundled webkit2gtk-4.0 (Citrix does not ship it; we
+# fetch a libsoup2.4-1 Debian package and unpack it into $ICAROOT/lib/).
+# Pin to Debian bookworm: webkit2gtk-4.0 2.36.0 was packaged for Debian 12
+# and is ABI-compatible with libsoup 2.74.x from bookworm.
+#
+# The sha256sums below are the real ones (verified 2026-06-15 by
+# `curl -sL <url> | sha256sum -`). If Debian pushes a security update
+# to libsoup2.4-1 (e.g. 2.74.3-1+deb12u2), bump LIBSOUP_DEB_VERSION
+# and re-compute the sha256.
+#
+# Fallback if deb.debian.org reorganises the pool (rare but the single
+# biggest point of fragility for D.3): snapshot.debian.org keeps every
+# historical .deb at a stable URL, e.g.
+#   https://snapshot.debian.org/archive/debian/<timestamp>/pool/main/libs/libsoup2.4/libsoup2.4-1_${LIBSOUP_DEB_VERSION}_amd64.deb
+# Pick a timestamp from https://snapshot.debian.org/package/libsoup2.4/${LIBSOUP_DEB_VERSION}/
+# Re-compute the sha256 from snapshot.debian.org if the file there is
+# byte-different (it shouldn't be — Debian pool .debs are immutable).
+: "${LIBSOUP_DEB_VERSION:=2.74.3-1+deb12u1}"
+_LIBSOUP_DEB_BASE="https://deb.debian.org/debian/pool/main/libs/libsoup2.4"
+source_x86_64+=("libsoup2.4-1-${LIBSOUP_DEB_VERSION}-amd64.deb::${_LIBSOUP_DEB_BASE}/libsoup2.4-1_${LIBSOUP_DEB_VERSION}_amd64.deb")
+source_aarch64+=("libsoup2.4-1-${LIBSOUP_DEB_VERSION}-arm64.deb::${_LIBSOUP_DEB_BASE}/libsoup2.4-1_${LIBSOUP_DEB_VERSION}_arm64.deb")
+sha256sums=('643427b6e04fc47cd7d514af2c2349948d3b45f536c434ba8682dcb1d4314736'
+            '446bfe50e5e1cb027415b264a090cede1468dfbdc8b55e5ce14e9289b6134119'
+            '1dc6d6592fa08c44fb6a4efa0dc238e9e78352bb799ef2e1a92358b390868064'
+            'cdfb3a2ef3bf6b0dd9d17c7a279735db23bc54420f34bfd43606830557a922fe'
+            'fe0b92bb9bfa32010fe304da5427d9ca106e968bad0e62a5a569e3323a57443f'
+            'a3bd74aaf19123cc550cde71b5870d7dacf9883b7e7a85c90e03b508426c16c4'
+            '0e3a6c7cf7fa9eee7dcde7356e90ffa1cb312bffc0813a0bf123d2f918dc369d'
+            '739da3fca95d07fc3076522acc6b6c1b12b988047bd2fb3c87e37231e49f2e1f')
+sha256sums_x86_64=('7764b9f3d32be349678269aadfaac0e13d725f3ffa49c2cddd32427c6572792b'
+                   'd3eac276ef1db0230cba32b68f510eb694d25fd35b7c970c965d8fcc3398d319')
+sha256sums_aarch64=('f990a87247f22e5433fa5d4f32aaa258ea7298f098c3db44230ac774cd5a02fd'
+                   'e3a1948af523c072a6c40767ccbae332df8d876043f5678f75e6c42cad1ccb19')
+install=citrix-client.install
+
+package() {
+    cd "${srcdir}"
+    ICAROOT=/opt/Citrix/ICAClient
+    if [[ $CARCH == 'x86_64' ]]
+    then
+        ICADIR="$srcdir/linuxx64/linuxx64.cor"
+        PKGINF="Ver.core.linuxx64"
+    elif [[ $CARCH == 'aarch64' ]]
+    then
+        ICADIR="$srcdir/linuxarm64/linuxarm64.cor"
+        PKGINF="Ver.core.linuxarm64"
+    fi
+    # Debian multiarch path component for the bundled webkit2gtk-4.0 libs
+    # and the libsoup-2.4 .deb (matches Citrix's tarball layout).
+    # Validate $CARCH explicitly so that any future architecture (e.g.
+    # armv7h, which would need a different multiarch like
+    # arm-linux-gnueabihf) fails fast and loudly at the start of the
+    # build, instead of silently producing a wrong path in Phase 2/5
+    # and a runtime breakage that's hard to diagnose.
+    case "$CARCH" in
+        x86_64|aarch64) ARCH_MULTIARCH="${CARCH}-linux-gnu" ;;
+        *)
+            echo "FATAL: unsupported CARCH=$CARCH (no Debian multiarch mapping)." >&2
+            echo "  Supported: \$CARCH values are x86_64 and aarch64." >&2
+            echo "  If you want to add a new arch, also update ICADIR, PKGINF, WEBKIT_TARBALL search, and the .deb URL in the header." >&2
+            return 1
+            ;;
+    esac
+    # Sanity-check $LIBSOUP_DEB_VERSION: a Debian package version is
+    # "<upstream>-<debian_revision>" (e.g. "2.74.3-1+deb12u1"). Catches
+    # typos or empty overrides that would otherwise fail later in
+    # curl/sha256 with a confusing makepkg error.
+    case "${LIBSOUP_DEB_VERSION}" in
+        [0-9]*.[0-9]*.[0-9]*-*)
+            ;;
+        *)
+            echo "FATAL: LIBSOUP_DEB_VERSION='${LIBSOUP_DEB_VERSION}' does not look like a Debian package version." >&2
+            echo "  Expected: '<upstream>-<debian_revision>' (e.g. '2.74.3-1+deb12u1')." >&2
+            echo "  This variable is set with a default; only override it if you know what you are doing." >&2
+            return 1
+            ;;
+    esac
+
+    mkdir -p "${pkgdir}$ICAROOT"
+
+    cd "$ICADIR"
+    install -m755 -t "${pkgdir}$ICAROOT" \
+            *.so *.DLL \
+            adapter AuthManagerDaemon icasessionmgr NativeMessagingHost \
+            PrimaryAuthManager ServiceRecord selfservice UtilDaemon wfica
+
+    # copy common directories
+    cp -rt "${pkgdir}$ICAROOT" aml clsync config gtk help icons keyboard keystore lib nls site usb util
+
+    # copy x86_64 only directories
+    if [[ $CARCH == 'x86_64' ]]
+    then
+        cp -rt "${pkgdir}$ICAROOT" bcr ceb
+    fi
+
+    # fix permissions
+    chmod -R a+r "${pkgdir}$ICAROOT"
+
+    # Install License
+    install -m644 -D -t "${pkgdir}$ICAROOT" nls/en.UTF-8/eula.txt
+    install -Dm644 nls/en.UTF-8/eula.txt "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+
+    # Install Version
+    install -m644 -D "${srcdir}/PkgId" "${pkgdir}$ICAROOT/pkginf/$PKGINF"
+
+    # create /config/.server to enable user customization using ~/.ICACLient/ overrides. Thanks Tomek
+    touch "${pkgdir}$ICAROOT/config/.server"
+
+    # Install wrapper script
+    install -m755 "${srcdir}/wfica.sh" "${pkgdir}$ICAROOT/wfica.sh"
+
+    ln -s gst_play1.0 "${pkgdir}/$ICAROOT/util/gst_play"
+    ln -s gst_read1.0 "${pkgdir}/$ICAROOT/util/gst_read"
+
+    # Dirty Hack
+    # wfica expects {module,wfclient,apssrv}.ini in $ICAROOT/config
+    # sadly these configs differ slightly by locale
+    lang=${LANG%%_*}
+    lang=${lang:-'en'}
+    [[ -d "${pkgdir}/$ICAROOT/nls/$lang" ]] || lang='en'
+    cp "${pkgdir}$ICAROOT/nls/$lang/module.ini" "${pkgdir}$ICAROOT/config/"
+    cp "${pkgdir}$ICAROOT/nls/$lang/appsrv.template" "${pkgdir}$ICAROOT/config/appsrv.ini"
+    cp "${pkgdir}$ICAROOT/nls/$lang/wfclient.template" "${pkgdir}$ICAROOT/config/wfclient.ini"
+
+    sed -i \
+        -e 's/Ceip=Enable/Ceip=Disable/' \
+        -e 's/DisableHeartBeat=False/DisableHeartBeat=True/' \
+        "${pkgdir}$ICAROOT/config/module.ini"
+    cd "${srcdir}"
+    # install freedesktop.org files
+    install -Dm644 -t "$pkgdir"/usr/share/applications citrix-{configmgr,conncenter,workspace,wfica}.desktop
+    # install scripts
+    install -Dm755 -t "${pkgdir}$ICAROOT" wfica.sh wfica_assoc.sh
+
+    chmod +x "${pkgdir}$ICAROOT"/util/{ctx_app_bind,ctxcwalogd,icalicense.sh,setlog}
+    if [[ "$CARCH" != 'aarch64' ]]
+    then
+        chmod +x "${pkgdir}$ICAROOT"/util/HdxRtcEngine
+    fi
+
+    # install systemd unit files
+    install -Dm755 -t "${pkgdir}/usr/lib/systemd/system" "ctxcwalogd.service"
+    install -Dm755 -t "${pkgdir}/usr/lib/systemd/system" "ctxusbd.service"
+
+    # ----------------------------------------------------------------------
+    # D.3: bundle webkit2gtk-4.0 from the Citrix tarball.
+    # See docs/d3-bundle-implementation-plan.md for the rationale and
+    # verified offsets / NUL padding math.
+    # ----------------------------------------------------------------------
+
+    # Phase 1: extract the inner webkit2gtk-4.0 tarball.
+    # Auto-detect the tarball location by `find` rather than hardcoding
+    # the linuxx64/linuxarm64 path. This is forward-compatible with
+    # any future Citrix rename of the inner directory (e.g. "Webkit2gtk4.0"
+    # -> "Webkit2Gtk" or similar); if the tarball exists anywhere in
+    # $srcdir, Phase 1 finds it. The hardcoded path used to be a single
+    # point of fragility for future Citrix releases.
+    WEBKIT_TARBALL=$(find "$srcdir" -name 'webkit2gtk-4.0.tar.gz' -type f | head -n1)
+    # `find -type f` returns paths to files that exist, so the empty-string
+    # check is sufficient. The combined check below is a defensive belt-and-
+    # braces against any future change in the tarball layout that could make
+    # `find` return a path that no longer points to a readable file.
+    if [[ -z "$WEBKIT_TARBALL" || ! -f "$WEBKIT_TARBALL" ]]; then
+        echo "FATAL: webkit2gtk-4.0 bundle tarball not found under $srcdir" >&2
+        echo "  Expected: .../webkit2gtk-4.0.tar.gz" >&2
+        echo "  (Citrix may have renamed or restructured the tarball in this release.)" >&2
+        return 1
+    fi
+    WEBKIT_PKG_DIR="${WEBKIT_TARBALL%.tar.gz}-package"
+    bsdtar -xf "$WEBKIT_TARBALL" -C "$(dirname "$WEBKIT_TARBALL")" || {
+        echo "FATAL: bsdtar failed to extract $WEBKIT_TARBALL" >&2
+        return 1
+    }
+    # Citrix's tarball nests the bundle as "<basename>-package/usr/lib/...".
+    # If a future Citrix release renames or restructures it, Phase 2 would
+    # `cp -a` from a missing directory and silently install nothing; catch
+    # it here with a clear message.
+    if [[ ! -d "$WEBKIT_PKG_DIR" ]]; then
+        echo "FATAL: extracted bundle dir not found at $WEBKIT_PKG_DIR" >&2
+        echo "  (Citrix may have changed the inner tarball layout.)" >&2
+        return 1
+    fi
+
+    # Phase 2: copy the libs to $ICAROOT/lib/. The trailing /. flattens
+    # the Debian multiarch path usr/lib/<arch>-linux-gnu/ but preserves
+    # the webkit2gtk-4.0/ subdir (so helpers land at
+    # $ICAROOT/lib/webkit2gtk-4.0/..., not $ICAROOT/lib/...).
+    cp -a "$WEBKIT_PKG_DIR/usr/lib/$ARCH_MULTIARCH/." "${pkgdir}$ICAROOT/lib/" || {
+        echo "FATAL: cp of webkit2gtk-4.0 bundle into $ICAROOT/lib/ failed" >&2
+        return 1
+    }
+    # Sanity check: a successful `cp -a` from a non-empty source should
+    # leave at least the main .so behind. The cp would silently copy
+    # nothing if $WEBKIT_PKG_DIR/usr/lib/$ARCH_MULTIARCH/ exists but is
+    # empty (e.g. Citrix silently dropped the bundle in this release);
+    # Phase 3's counter would catch this indirectly via "< 3 patched",
+    # but an explicit check here gives a clearer error.
+    if [[ ! -f "${pkgdir}$ICAROOT/lib/libwebkit2gtk-4.0.so.37.56.4" ]]; then
+        echo "FATAL: webkit2gtk-4.0 main .so missing from $ICAROOT/lib/ after Phase 2 copy" >&2
+        echo "  The bundle was extracted (Phase 1) but the main .so is not present." >&2
+        echo "  Citrix may have changed the bundle layout in this release." >&2
+        return 1
+    fi
+
+    # Phase 3: set RUNPATH on the main libs. The .so will dlopen its
+    # siblings (libicu*.so.70.1, libjavascriptcoregtk-4.0.so.18) via
+    # $ORIGIN at runtime. This replaces Debian's absolute /usr/lib/...
+    # paths and means we don't need a system webkit2gtk.
+    #
+    # The counter at the end is a forward-compat guard: if Citrix ever
+    # ships a newer ICU (e.g. libicu*.so.71.1) in a future Workspace
+    # release, the glob `libicu*.so.70.1` would silently match nothing,
+    # the loop would exit 0, and the build would produce a package
+    # that fails at runtime. The counter catches this case at build
+    # time with a clear FATAL.
+    #
+    # Use pre-increment (++x) not post-increment (x++) because bash's
+    # `(( expr ))` returns failure (exit 1) when expr evaluates to 0.
+    # `(( x++ ))` returns the OLD value, so the first call (when x=0)
+    # returns 0 and the function exits under set -e. Pre-increment
+    # always returns the NEW value, which is non-zero from the first
+    # iteration onward.
+    local _d3_p3_patched=0
+    for f in "${pkgdir}$ICAROOT"/lib/libwebkit2gtk-4.0.so.37.56.4 \
+             "${pkgdir}$ICAROOT"/lib/libjavascriptcoregtk-4.0.so.18.20.4 \
+             "${pkgdir}$ICAROOT"/lib/libicu*.so.70.1; do
+        if [[ -f "$f" ]]; then
+            patchelf --set-rpath '$ORIGIN' "$f" || {
+                echo "FATAL: patchelf --set-rpath failed on $f" >&2
+                return 1
+            }
+            ((++_d3_p3_patched))
+        fi
+    done
+    if (( _d3_p3_patched < 3 )); then
+        echo "FATAL: Phase 3 patched only $_d3_p3_patched libs, expected at least 3 (webkit, jscore, ICU)." >&2
+        echo "  Citrix may have changed the bundle layout (e.g. ICU 70 -> 71). See docs/alternatives.md D.3 section on ICU version." >&2
+        return 1
+    fi
+
+    # Phase 4: set RUNPATH on the helper binaries. They are spawned by
+    # libwebkit2gtk-4.0.so.37 via exec() and need to find their sibling
+    # libs in the same dir.
+    #
+    # Forward-compat counter: a missing helper is non-fatal at build time
+    # (each is checked with [[ -f ]] and skipped if absent, so Citrix can
+    # rename a helper without breaking the build), but if ALL three are
+    # missing something is fundamentally wrong (Citrix removed the bundle
+    # structure entirely) and we want a loud WARNING, not a silent success.
+    # The threshold is ">= 1" because WebKitNetworkProcess is the only one
+    # strictly required for selfservice to render the StoreFront page; the
+    # other two are present in 26.01.0.150 but their absence does not block
+    # S1. (See docs/d3-bundle-implementation-plan.md for the helper list.)
+    #
+    # WebKitNetworkProcess is strictly required for S1 (selfservice
+    # StoreFront page rendering) and its absence would silently pass the
+    # build with a WARNING but break runtime. Treat its absence as FATAL.
+    # WebKitWebProcess and MiniBrowser are not strictly required for S1
+    # (they serve wfica / diagnostic flows), so a missing one is WARNING.
+    if [[ ! -f "${pkgdir}$ICAROOT/lib/webkit2gtk-4.0/WebKitNetworkProcess" ]]; then
+        echo "FATAL: required helper WebKitNetworkProcess not found in bundle;" >&2
+        echo "  selfservice will not be able to render the StoreFront page (S1 will fail)." >&2
+        echo "  Citrix may have renamed or removed this helper in this release." >&2
+        return 1
+    fi
+    local _d3_p4_patched=0
+    for f in "${pkgdir}$ICAROOT"/lib/webkit2gtk-4.0/{WebKitNetworkProcess,WebKitWebProcess,MiniBrowser}; do
+        if [[ -f "$f" ]]; then
+            patchelf --set-rpath '$ORIGIN' "$f" || {
+                echo "FATAL: patchelf --set-rpath failed on $f" >&2
+                return 1
+            }
+            ((++_d3_p4_patched))
+        fi
+    done
+    if (( _d3_p4_patched < 3 )); then
+        echo "WARNING: Phase 4 patched only $_d3_p4_patched of the 3 known webkit helpers (WebKitWebProcess and/or MiniBrowser may be missing from the Citrix bundle; S1 should still work via WebKitNetworkProcess)" >&2
+    fi
+
+    # Phase 5: string-patch the hardcoded Debian multiarch paths inside
+    # libwebkit2gtk-4.0.so.37. There are at least two such paths in
+    # 26.01.0.150 (the regex is flexible enough to catch any future
+    # additions Citrix might introduce):
+    #   - /usr/lib/<arch>-linux-gnu/webkit2gtk-4.0          (helpers dir)
+    #   - /usr/lib/<arch>-linux-gnu/webkit2gtk-4.0/injected-bundle/  (injected bundle)
+    # The replacement path /opt/citrix-webkit/webkit2gtk-4.0[.../] is
+    # shorter than the original; we NUL-pad to keep the on-disk section
+    # size unchanged (the dynamic loader cares about section sizes).
+    # The padding count is computed per match by perl (s{}{}ge); a
+    # hardcoded NUL count would be wrong for paths of different lengths.
+    #
+    # The replacement tree is installed at /opt/citrix-webkit/ below.
+    # Note: this duplicates the webkit2gtk-4.0/ tree that Phase 2 already
+    # copied to $ICAROOT/lib/. The duplication is INTENTIONAL — the two
+    # copies serve different load paths:
+    #   - $ICAROOT/lib/webkit2gtk-4.0/  : the helpers (and injected-bundle)
+    #     that libwebkit2gtk-4.0.so.37 EXECS via dlopen()/posix_spawn().
+    #     The helpers themselves are patched in Phase 4 to find their
+    #     sibling libs via $ORIGIN.
+    #   - /opt/citrix-webkit/webkit2gtk-4.0/  : the same tree, present
+    #     because the perl path-patch below makes libwebkit2gtk-4.0.so.37
+    #     dlopen() WebKitNetworkProcess and similar from
+    #     /opt/citrix-webkit/... (the absolute path baked into the .so
+    #     by the upstream Debian build).
+    # Each copy is small (<1 MB each for the 3 helpers + injected-bundle,
+    # ~4 MB total), so the redundancy is acceptable. The two trees must
+    # be kept in sync; Phase 1 always re-extracts from the tarball so
+    # both copies come from the same source on every build.
+    #
+    # IMPORTANT: the in-place NUL padding strategy ONLY works because the
+    # replacement path is SHORTER than the original (length($n) < length($o)).
+    # The perl `die` below catches the day Citrix changes the multiarch
+    # path (e.g. drops -linux-gnu) such that the replacement becomes
+    # longer than the original. Without the die, the perl would emit
+    # `Negative repeat count does nothing` and silently produce a
+    # truncated string, corrupting the .so.
+    WEBKIT_SO="${pkgdir}$ICAROOT/lib/libwebkit2gtk-4.0.so.37.56.4"
+    mkdir -p "${pkgdir}/opt/citrix-webkit"
+    cp -a "$WEBKIT_PKG_DIR/usr/lib/$ARCH_MULTIARCH/webkit2gtk-4.0" "${pkgdir}/opt/citrix-webkit/" || {
+        echo "FATAL: cp of webkit2gtk-4.0 helpers into /opt/citrix-webkit/ failed" >&2
+        return 1
+    }
+
+    # Snapshot the original size; the in-place edit MUST preserve it
+    # exactly (perl -i with `s{}{}ge` and NUL padding does, but verify).
+    WEBKIT_SO_SIZE_BEFORE=$(stat -c '%s' "$WEBKIT_SO")
+
+    # The two single-quoted strings are concatenated with the bash
+    # double-quoted $ARCH_MULTIARCH so the perl sees the right multiarch
+    # at build time. Inside the perl, $1 etc. are perl variables
+    # (single-quoted, no bash interpolation).
+    # `\Q...\E` quotes the multiarch string so any future regex-meta
+    # characters (e.g. `+` in `arm-linux-gnueabihf`) are treated as
+    # literals by perl; today `x86_64-linux-gnu` and `aarch64-linux-gnu`
+    # have no meta-characters so the `\Q` is a no-op, but it makes the
+    # code robust to future multiarch strings.
+    perl -0777 -pe '
+        s{(/usr/lib/\Q'"$ARCH_MULTIARCH"'\E/webkit2gtk-4\.0(?:/injected-bundle/)?)}
+         { my $o = $1; my $n = $o; $n =~ s{^/usr/lib/\Q'"$ARCH_MULTIARCH"'\E}{/opt/citrix-webkit};
+           my $pad = length($o) - length($n);
+           die "FATAL: replacement path longer than original (orig=$o, new=$n) — Strategy (a) NUL padding cannot grow the on-disk section; bump to Strategy (b) (replicate the Debian multiarch path) in docs/d3-bundle-implementation-plan.md" if $pad < 0;
+           $n . ("\x00" x $pad) }ge
+    ' -i "$WEBKIT_SO" || {
+        echo "FATAL: perl Phase 5 path-patching failed on $WEBKIT_SO" >&2
+        return 1
+    }
+
+    # Post-Phase 5 verification: the perl just rewrote bytes inside an
+    # ELF .so. Three checks make sure we didn't break anything:
+    #   1. file size unchanged (NUL padding preserves on-disk layout)
+    #   2. readelf can still parse the ELF header (no structural damage)
+    #   3. no old Debian multiarch paths leaked through
+    #
+    # A 4th check (ldd on the patched .so) is deferred to the end of
+    # package() because at this point libsoup-2.4.so.1 (NEEDED by the
+    # patched .so) is not yet bundled — that's Phase 7. The end-of-
+    # package ldd check covers the patched .so + the other bundled
+    # libs together, which is the more comprehensive check.
+    WEBKIT_SO_SIZE_AFTER=$(stat -c '%s' "$WEBKIT_SO")
+    if [[ "$WEBKIT_SO_SIZE_BEFORE" != "$WEBKIT_SO_SIZE_AFTER" ]]; then
+        echo "FATAL: Phase 5 changed .so size: before=$WEBKIT_SO_SIZE_BEFORE after=$WEBKIT_SO_SIZE_AFTER" >&2
+        return 1
+    fi
+    if ! readelf -h "$WEBKIT_SO" >/dev/null 2>&1; then
+        echo "FATAL: Phase 5 perl path-patch corrupted the ELF header of $WEBKIT_SO (readelf -h failed)" >&2
+        return 1
+    fi
+    if strings "$WEBKIT_SO" | grep -qF "/usr/lib/$ARCH_MULTIARCH/webkit2gtk-4.0"; then
+        echo "FATAL: Phase 5 string patching failed — old Debian path /usr/lib/$ARCH_MULTIARCH/webkit2gtk-4.0 still present in $WEBKIT_SO" >&2
+        return 1
+    fi
+    # Specific injected-bundle check: the .so dlopens the WebKit extension
+    # from <webkit2gtk-4.0>/injected-bundle/. A historical rogueai bug
+    # was that the perl regex matched the helpers dir but missed the
+    # injected-bundle subpath (no /g flag). Verify the injected-bundle
+    # subpath is also gone; the broader check above covers the prefix
+    # but this one makes the failure message more specific if it ever
+    # regresses.
+    if strings "$WEBKIT_SO" | grep -qF "/usr/lib/$ARCH_MULTIARCH/webkit2gtk-4.0/injected-bundle"; then
+        echo "FATAL: Phase 5 string patching missed the injected-bundle subpath in $WEBKIT_SO" >&2
+        return 1
+    fi
+
+    # Phase 6: make Citrix binaries prefer the bundled libs.
+    #
+    # Background: selfservice already has a DT_RPATH that Citrix compiled
+    # into it. patchelf's --set-rpath alone cannot overwrite an existing
+    # DT_RPATH, so we use --force-rpath to forcibly replace it.
+    #
+    # DT_RPATH vs DT_RUNPATH: these are two different ELF dynamic tags
+    # that do similar things but have different search semantics:
+    #   - DT_RPATH (the legacy 1995 tag): transitive. LD_LIBRARY_PATH is
+    #     consulted AFTER DT_RPATH. The libs in $ORIGIN/lib that we load
+    #     see the RPATH of selfservice.
+    #   - DT_RUNPATH (the modern 1999 tag): non-transitive. Only the
+    #     main executable's RUNPATH is consulted for the initial search;
+    #     transitive libs only see their own RUNPATH.
+    #
+    # We use --force-rpath (which produces DT_RPATH) because:
+    #   1. selfservice was built with DT_RPATH by Citrix, and we need to
+    #      overwrite that pre-existing tag.
+    #   2. It happens to be equivalent to DT_RUNPATH for our use case
+    #      because the libs in $ORIGIN/lib/ already have their own
+    #      RUNPATH=$ORIGIN set in Phase 3, so the transitive question
+    #      never arises.
+    #
+    # DO NOT change this to plain --set-rpath "for consistency" — it
+    # would silently fail to overwrite the existing DT_RPATH and the
+    # bundled libs would not be preferred at runtime.
+    patchelf --force-rpath --set-rpath '$ORIGIN/lib' "${pkgdir}$ICAROOT/selfservice" || {
+        echo "FATAL: patchelf --force-rpath failed on selfservice (the Citrix main binary)" >&2
+        return 1
+    }
+    # UIDialogLibWebKit3.so is the wfica "Connecting..." dialog
+    # library, load-bearing for S3 (wfica opens .ica, dialog renders).
+    # Its absence would silently pass the build but break S3 at runtime.
+    # Treat its absence as FATAL so a future Citrix rename/restructure
+    # surfaces at build time with a clear message.
+    if [[ ! -f "${pkgdir}$ICAROOT/lib/UIDialogLibWebKit3.so" ]]; then
+        echo "FATAL: UIDialogLibWebKit3.so not found in $ICAROOT/lib/;" >&2
+        echo "  this is the wfica connection dialog library, required for S3 (wfica dialog rendering)." >&2
+        echo "  Citrix may have renamed or removed it in this release." >&2
+        return 1
+    fi
+    patchelf --set-rpath '$ORIGIN' "${pkgdir}$ICAROOT/lib/UIDialogLibWebKit3.so" || {
+        echo "FATAL: patchelf --set-rpath failed on UIDialogLibWebKit3.so" >&2
+        return 1
+    }
+
+    # Phase 7: extract libsoup-2.4.so.1 from the libsoup2.4-1 Debian
+    # package. Citrix does not bundle libsoup-2.4, and Arch's libsoup
+    # (the system package) is not enough on its own if the user does
+    # not have AUR webkit2gtk installed. We pin to Debian bookworm
+    # because the bundled webkit2gtk-4.0 2.36.0 was built against
+    # libsoup 2.74.x from there.
+    # Find the .deb in $srcdir. The source URL ends with
+    # libsoup2.4-1-${LIBSOUP_DEB_VERSION}_amd64.deb / _arm64.deb; the
+    # bsdtar-restored name is libsoup2.4-1-${LIBSOUP_DEB_VERSION}-amd64.deb
+    # (bsdtar normalises _ to - in the local filename). Match the local
+    # form.
+    local deb_arch="amd64"
+    [[ "$CARCH" == aarch64 ]] && deb_arch="arm64"
+    LIBSOUP_DEB_SRC="$srcdir/libsoup2.4-1-${LIBSOUP_DEB_VERSION}-${deb_arch}.deb"
+    if [[ ! -f "$LIBSOUP_DEB_SRC" ]]; then
+        echo "FATAL: libsoup2.4-1 .deb not found at $LIBSOUP_DEB_SRC" >&2
+        echo "  Did the Debian URL change? See the LIBSOUP_DEB_VERSION comment near the top of the PKGBUILD." >&2
+        return 1
+    fi
+    # All Phase 7 error branches clean up the temp dir. The dir is
+    # only created at the `mkdir -p` further below, so the cleanup is
+    # a no-op in the branch above; we still call it for consistency
+    # with the other branches (and to be safe if the order of checks
+    # ever changes).
+    _d3_p7_cleanup() {
+        # popd is best-effort: we may not be inside a pushd when this
+        # runs (e.g. error before pushd, or after a successful popd).
+        # popd fails silently if the dir stack is empty.
+        popd >/dev/null 2>&1 || true
+        [[ -n "${LIBSOUP_DEB_TMP:-}" ]] && rm -rf "$LIBSOUP_DEB_TMP"
+    }
+    # A .deb is an ar(1) archive (Debian binary package format 2.0) with
+    # three members: debian-binary, control.tar.{xz,zst}, data.tar.{xz,zst}.
+    # ar(1) is in binutils (base-devel); bsdtar does not recursively unpack
+    # a .deb. We only need the data.tar.* payload.
+    #
+    # Use $srcdir for the temp dir (per makepkg conventions) rather than
+    # /tmp so cleanup is automatic if makepkg's BUILDDIR cleanup runs,
+    # and so the .deb extraction inherits $srcdir's filesystem (avoids
+    # /tmp full / tmpfs-too-small issues on small hosts).
+    LIBSOUP_DEB_TMP="$srcdir/libsoup-deb-extract"
+    rm -rf "$LIBSOUP_DEB_TMP"
+    mkdir -p "$LIBSOUP_DEB_TMP"
+    pushd "$LIBSOUP_DEB_TMP" >/dev/null || {
+        echo "FATAL: pushd $LIBSOUP_DEB_TMP failed" >&2
+        _d3_p7_cleanup
+        return 1
+    }
+    ar x "$LIBSOUP_DEB_SRC" || {
+        echo "FATAL: ar x failed on $LIBSOUP_DEB_SRC (corrupt .deb?)" >&2
+        _d3_p7_cleanup
+        return 1
+    }
+    # Probe known data.tar.* compressors in priority order rather than
+    # `ls | head -n1`. Debian currently ships data.tar.xz for libsoup2.4-1,
+    # but zst / bz2 / gz are also valid per the .deb spec.
+    DATA_TAR=""
+    for ext in xz zst bz2 gz; do
+        if [[ -f "data.tar.$ext" ]]; then
+            DATA_TAR="data.tar.$ext"
+            break
+        fi
+    done
+    if [[ -z "$DATA_TAR" ]]; then
+        echo "FATAL: no data.tar.{xz,zst,bz2,gz} inside $LIBSOUP_DEB_SRC" >&2
+        _d3_p7_cleanup
+        return 1
+    fi
+    bsdtar -xf "$DATA_TAR" || {
+        echo "FATAL: bsdtar -xf $DATA_TAR failed" >&2
+        _d3_p7_cleanup
+        return 1
+    }
+    popd >/dev/null
+    # Install libsoup-2.4.so.1 (the SONAME, the real .so file, not the
+    # .so.1 -> .so.1.X.Y symlink). The .deb typically lays out:
+    #   usr/lib/<arch>-linux-gnu/libsoup-2.4.so.1.X.Y     (the file)
+    #   usr/lib/<arch>-linux-gnu/libsoup-2.4.so.1        (symlink to file)
+    #   usr/lib/<arch>-linux-gnu/libsoup-2.4.so          (dev symlink, optional)
+    # We install the .so.1.X.Y file under the SONAME libsoup-2.4.so.1
+    # and replicate the symlinks so the loader can resolve the SONAME
+    # (some loaders only walk through the .so -> .so.1 chain).
+    #
+    # Locate the SONAME file using `find -print0` + `read -d ''` (handles
+    # paths with spaces safely) and verify there is EXACTLY ONE match —
+    # multiple matches would mean the .deb layout changed and we're
+    # picking one arbitrarily, which is fragile. (e.g. if Debian someday
+    # ships libsoup-2.4.so.1.11.2 AND libsoup-2.4.so.1.11.3 in the same
+    # .deb, which is unlikely but possible.)
+    local _d3_libsoup_sos=()
+    while IFS= read -r -d '' _f; do
+        _d3_libsoup_sos+=("$_f")
+    done < <(find "$LIBSOUP_DEB_TMP" -name 'libsoup-2.4.so.1.*' -type f -print0)
+    if (( ${#_d3_libsoup_sos[@]} == 0 )); then
+        echo "FATAL: libsoup-2.4.so.1.X.Y not found inside $LIBSOUP_DEB_SRC" >&2
+        _d3_p7_cleanup
+        return 1
+    fi
+    if (( ${#_d3_libsoup_sos[@]} > 1 )); then
+        echo "FATAL: expected exactly one libsoup-2.4.so.1.* inside $LIBSOUP_DEB_SRC, found ${#_d3_libsoup_sos[@]}: ${_d3_libsoup_sos[*]}" >&2
+        _d3_p7_cleanup
+        return 1
+    fi
+    LIBSOUP_SO_SRC="${_d3_libsoup_sos[0]}"
+    install -m755 "$LIBSOUP_SO_SRC" "${pkgdir}$ICAROOT/lib/libsoup-2.4.so.1"
+    # Note on permissions: Phase 2 uses `cp -a` to copy the webkit2gtk
+    # bundle, which preserves the upstream tarball's permissions (e.g.
+    # 644 for .so files in the Citrix tarball). Phase 7 uses
+    # `install -m755` for libsoup, which fixes 755 (rwxr-xr-x)
+    # regardless of the .deb's perms. 755 is the canonical permission
+    # for shared libraries on Linux; Phase 2's preservation is a
+    # carry-over from the Citrix tarball. The runtime is not affected
+    # (libraries are mmap'd read+exec regardless of mode bits for the
+    # user invoking the loader), but `ls -l` will show 755 for libsoup
+    # and 644 for the webkit2gtk-4.0 .so files. Not a bug, but a
+    # visible inconsistency that this comment makes explicit.
+    # Replicate the rest of the symlink chain from the .deb. The .deb
+    # typically has libsoup-2.4.so (dev symlink, may be present) and a
+    # libsoup-2.4.so.1 symlink that points to the SONAME. We must skip
+    # libsoup-2.4.so.1 here because we just installed the REAL file at
+    # that SONAME path; otherwise the cp would overwrite the file with
+    # the .deb's symlink and the loader would fail to find the lib.
+    for f in "$LIBSOUP_DEB_TMP"/usr/lib/"$ARCH_MULTIARCH"/libsoup-2.4.so*; do
+        [[ -L "$f" ]] || continue
+        local bn
+        bn=$(basename "$f")
+        [[ "$bn" == "libsoup-2.4.so.1" ]] && continue
+        cp -a "$f" "${pkgdir}$ICAROOT/lib/$bn"
+    done
+    # popd is a no-op here (we already popped after bsdtar) but the
+    # helper does a best-effort popd, so it's safe to call.
+    _d3_p7_cleanup
+
+    # Final cross-phase verification: all bundled libs should resolve
+    # their NEEDED deps via $ORIGIN at this point. System libs (libgtk-3,
+    # libgdk-3, libcairo, etc.) are intentionally not in the bundle and
+    # are the user's job to install, so we only fail on the bundled deps
+    # (libjavascriptcoregtk, libicu*, libsoup, the helpers' own deps).
+    #
+    # Restrict the ldd check to the bundled .so and the .so that the
+    # perl patch touched, and only flag the libs that the bundle is
+    # supposed to provide. This catches the residual risk that the
+    # Phase 5 verifications don't cover: offset corruption inside the
+    # .so that readelf -h passes but ldd surfaces as "not found".
+    local _d3_postverify_failed=0
+    for _so in \
+        "${pkgdir}$ICAROOT/lib/libwebkit2gtk-4.0.so.37.56.4" \
+        "${pkgdir}$ICAROOT/lib/libjavascriptcoregtk-4.0.so.18.20.4"; do
+        if [[ ! -f "$_so" ]]; then
+            continue
+        fi
+        # `ldd` only resolves libraries listed in NEEDED. The patched
+        # .so's NEEDED list is large (~60 entries), most of which are
+        # system libs that won't be in the chroot. We can't tell ldd
+        # to skip those, so we filter the output to the bundled libs
+        # only.
+        if ldd "$_so" 2>/dev/null \
+            | grep -E '(libjavascriptcoregtk|libicu[A-Za-z]*\.so\.70|libsoup-2\.4\.so\.1)' \
+            | grep -q "not found"; then
+            echo "FATAL: $_so has an unresolved bundled dependency:" >&2
+            ldd "$_so" 2>/dev/null | grep "not found" >&2
+            _d3_postverify_failed=1
+        fi
+    done
+    if (( _d3_postverify_failed )); then
+        return 1
+    fi
+}
